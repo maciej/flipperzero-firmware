@@ -26,6 +26,46 @@ static SubGhzReceiver* receiver_handler;
 static SubGhzFileEncoderWorker* file_worker_encoder_handler;
 static uint16_t subghz_test_decoder_count = 0;
 
+static FuriHalSubGhzPreset subghz_test_get_default_preset(void) {
+    return FuriHalSubGhzPresetOok650Async;
+}
+
+static bool subghz_test_parse_preset(const char* preset_name, FuriHalSubGhzPreset* preset) {
+    if((preset_name == NULL) || (preset == NULL)) {
+        return false;
+    }
+
+    if(strcmp(preset_name, "AM270") == 0) {
+        *preset = FuriHalSubGhzPresetOok270Async;
+    } else if(strcmp(preset_name, "AM650") == 0) {
+        *preset = FuriHalSubGhzPresetOok650Async;
+    } else if(strcmp(preset_name, "FM238") == 0) {
+        *preset = FuriHalSubGhzPreset2FSKDev238Async;
+    } else if(strcmp(preset_name, "FM476") == 0) {
+        *preset = FuriHalSubGhzPreset2FSKDev476Async;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+static const char* subghz_test_get_preset_alias(FuriHalSubGhzPreset preset) {
+    if(preset == FuriHalSubGhzPresetOok270Async) {
+        return "AM270";
+    } else if(preset == FuriHalSubGhzPresetOok650Async) {
+        return "AM650";
+    } else if(preset == FuriHalSubGhzPreset2FSKDev238Async) {
+        return "FM238";
+    } else if(preset == FuriHalSubGhzPreset2FSKDev476Async) {
+        return "FM476";
+    } else if(preset == FuriHalSubGhzPresetCustom) {
+        return "CUSTOM";
+    } else {
+        return "UNKNOWN";
+    }
+}
+
 static void subghz_test_rx_callback(
     SubGhzReceiver* receiver,
     SubGhzProtocolDecoderBase* decoder_base,
@@ -215,6 +255,42 @@ MU_TEST(subghz_keystore_test) {
     mu_assert(
         subghz_environment_load_keystore(environment_handler, KEYSTORE_DIR_NAME),
         "Test keystore error");
+}
+
+MU_TEST(subghz_cli_preset_parse_test) {
+    FuriHalSubGhzPreset preset = FuriHalSubGhzPresetIDLE;
+
+    mu_check(subghz_test_parse_preset("AM270", &preset));
+    mu_assert_int_eq(FuriHalSubGhzPresetOok270Async, preset);
+    mu_assert(strcmp(subghz_test_get_preset_alias(preset), "AM270") == 0, "AM270 alias mismatch");
+
+    mu_check(subghz_test_parse_preset("AM650", &preset));
+    mu_assert_int_eq(FuriHalSubGhzPresetOok650Async, preset);
+    mu_assert(strcmp(subghz_test_get_preset_alias(preset), "AM650") == 0, "AM650 alias mismatch");
+
+    mu_check(subghz_test_parse_preset("FM238", &preset));
+    mu_assert_int_eq(FuriHalSubGhzPreset2FSKDev238Async, preset);
+    mu_assert(strcmp(subghz_test_get_preset_alias(preset), "FM238") == 0, "FM238 alias mismatch");
+
+    mu_check(subghz_test_parse_preset("FM476", &preset));
+    mu_assert_int_eq(FuriHalSubGhzPreset2FSKDev476Async, preset);
+    mu_assert(strcmp(subghz_test_get_preset_alias(preset), "FM476") == 0, "FM476 alias mismatch");
+}
+
+MU_TEST(subghz_cli_preset_invalid_test) {
+    FuriHalSubGhzPreset preset = FuriHalSubGhzPresetIDLE;
+
+    mu_check(!subghz_test_parse_preset("BADPRESET", &preset));
+    mu_assert_int_eq(FuriHalSubGhzPresetIDLE, preset);
+}
+
+MU_TEST(subghz_cli_preset_default_test) {
+    FuriHalSubGhzPreset preset = subghz_test_get_default_preset();
+
+    mu_assert_int_eq(FuriHalSubGhzPresetOok650Async, preset);
+    mu_assert(
+        strcmp(subghz_test_get_preset_alias(preset), "AM650") == 0,
+        "Default preset alias mismatch");
 }
 
 typedef enum {
@@ -940,6 +1016,9 @@ MU_TEST(subghz_random_test) {
 MU_TEST_SUITE(subghz) {
     subghz_test_init();
     MU_RUN_TEST(subghz_keystore_test);
+    MU_RUN_TEST(subghz_cli_preset_parse_test);
+    MU_RUN_TEST(subghz_cli_preset_invalid_test);
+    MU_RUN_TEST(subghz_cli_preset_default_test);
 
     MU_RUN_TEST(subghz_hal_async_tx_test);
 

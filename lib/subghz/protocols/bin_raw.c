@@ -135,6 +135,41 @@ static uint16_t subghz_protocol_bin_raw_get_full_byte(uint16_t bit_count) {
     }
 }
 
+static bool subghz_protocol_bin_raw_compare_segments(
+    const SubGhzProtocolDecoderBinRAW* instance,
+    const BinRAW_Markup* lhs,
+    const BinRAW_Markup* rhs) {
+    furi_assert(instance);
+    furi_assert(lhs);
+    furi_assert(rhs);
+
+    if(lhs->bit_count != rhs->bit_count) {
+        return false;
+    }
+
+    uint16_t byte_count = subghz_protocol_bin_raw_get_full_byte(lhs->bit_count);
+    if(byte_count == 0) {
+        return true;
+    }
+
+    if(byte_count > 1) {
+        if(memcmp(
+               instance->data + lhs->byte_bias, instance->data + rhs->byte_bias, byte_count - 1) !=
+           0) {
+            return false;
+        }
+    }
+
+    uint8_t valid_bits_in_last_byte = lhs->bit_count & 0x7;
+    uint8_t last_byte_mask =
+        valid_bits_in_last_byte ? (uint8_t)(0xFFu << (8 - valid_bits_in_last_byte)) : 0xFFu;
+
+    uint8_t lhs_last = instance->data[lhs->byte_bias + byte_count - 1] & last_byte_mask;
+    uint8_t rhs_last = instance->data[rhs->byte_bias + byte_count - 1] & last_byte_mask;
+
+    return lhs_last == rhs_last;
+}
+
 void* subghz_protocol_encoder_bin_raw_alloc(SubGhzEnvironment* environment) {
     UNUSED(environment);
     SubGhzProtocolEncoderBinRAW* instance = malloc(sizeof(SubGhzProtocolEncoderBinRAW));
@@ -490,7 +525,7 @@ static bool
             return false;
         //arrange the first 2 date values in ascending order
         if(classes[0].data > classes[1].data) {
-            uint32_t data = classes[1].data;
+            uint32_t data = classes[0].data;
             classes[0].data = classes[1].data;
             classes[1].data = data;
         }
@@ -608,9 +643,12 @@ static bool
 
         //choose the value with the maximum repetition
         data_temp = 0;
+        uint16_t data_temp_count = 0;
         for(size_t i = 0; i < BIN_RAW_SEARCH_CLASSES; i++) {
-            if((classes[i].count > 1) && (data_temp < classes[i].count))
+            if((classes[i].count > 1) && (data_temp_count < classes[i].count)) {
+                data_temp_count = classes[i].count;
                 data_temp = (int)classes[i].data;
+            }
         }
 
         //if(data_markup_ind == 0) return false;
@@ -667,10 +705,9 @@ static bool
 
                     uint16_t byte_count =
                         subghz_protocol_bin_raw_get_full_byte(instance->data_markup[i].bit_count);
-                    if(memcmp(
-                           instance->data + instance->data_markup[i].byte_bias,
-                           instance->data + instance->data_markup[i + 1].byte_bias,
-                           byte_count - 1) == 0) {
+                    UNUSED(byte_count);
+                    if(subghz_protocol_bin_raw_compare_segments(
+                           instance, &instance->data_markup[i], &instance->data_markup[i + 1])) {
                         bin_raw_debug_tag(
                             TAG, "Match found bin_raw_type=BinRAWTypeGapRecurring\r\n\r\n");
 
@@ -717,14 +754,12 @@ static bool
                        subghz_protocol_bin_raw_get_full_byte(
                            instance->data_markup[y].bit_count)) { //if the length in bytes matches
 
-                        if((memcmp(
-                                instance->data + instance->data_markup[i].byte_bias,
-                                instance->data + instance->data_markup[y].byte_bias,
-                                byte_count - 1) == 0) &&
-                           (memcmp(
-                                instance->data + instance->data_markup[i + 1].byte_bias,
-                                instance->data + instance->data_markup[y + 1].byte_bias,
-                                byte_count - 1) == 0)) {
+                        if(subghz_protocol_bin_raw_compare_segments(
+                               instance, &instance->data_markup[i], &instance->data_markup[y]) &&
+                           subghz_protocol_bin_raw_compare_segments(
+                               instance,
+                               &instance->data_markup[i + 1],
+                               &instance->data_markup[y + 1])) {
                             uint8_t index = 0;
 #ifdef BIN_RAW_DEBUG
                             bin_raw_debug_tag(
@@ -1141,9 +1176,29 @@ void subghz_protocol_decoder_bin_raw_get_string(void* context, FuriString* outpu
         instance->generic.protocol_name,
         instance->generic.data_count_bit);
 
-    uint16_t byte_count = subghz_protocol_bin_raw_get_full_byte(instance->generic.data_count_bit);
-    for(size_t i = 0; (byte_count < 36 ? i < byte_count : i < 36); i++) {
-        furi_string_cat_printf(output, "%02X", instance->data[i]);
+    size_t remaining_byte_count = 36;
+    if(instance->data_markup[0].bit_count != 0) {
+        for(size_t markup_index = 0;
+            markup_index < BIN_RAW_MAX_MARKUP_COUNT &&
+            instance->data_markup[markup_index].bit_count != 0 && remaining_byte_count != 0;
+            markup_index++) {
+            uint16_t byte_count = subghz_protocol_bin_raw_get_full_byte(
+                instance->data_markup[markup_index].bit_count);
+            for(size_t byte_index = 0; byte_index < byte_count && remaining_byte_count != 0;
+                byte_index++, remaining_byte_count--) {
+                furi_string_cat_printf(
+                    output,
+                    "%02X",
+                    instance->data[instance->data_markup[markup_index].byte_bias + byte_index]);
+            }
+        }
+    } else {
+        uint16_t byte_count =
+            subghz_protocol_bin_raw_get_full_byte(instance->generic.data_count_bit);
+        for(size_t i = 0; i < byte_count && remaining_byte_count != 0;
+            i++, remaining_byte_count--) {
+            furi_string_cat_printf(output, "%02X", instance->data[i]);
+        }
     }
 
     furi_string_cat_printf(output, "\r\nTe:%luus\r\n", instance->te);
